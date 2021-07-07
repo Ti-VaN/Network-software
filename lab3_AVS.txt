@@ -1,0 +1,272 @@
+server.c
+
+#include<stdio.h>
+#include<ctype.h>
+#include<stdlib.h>
+#include<string.h>
+#include<unistd.h>
+#include<signal.h>
+#include<sys/wait.h>
+#include<sys/types.h>
+#include<sys/socket.h>
+#include<netinet/in.h>
+#include<arpa/inet.h>
+#include<errno.h>
+#include<sys/file.h>
+#include<sys/msg.h>
+#include<sys/ipc.h>
+#include<time.h>
+ 
+#define BUFLEN 512
+ 
+void die(char *s){
+    perror(s);
+    exit(1);
+}
+
+struct dhcpmessage
+{
+    uint8_t op;
+    uint8_t htype;
+    uint8_t hlen;
+    uint8_t hops;
+    uint32_t xid;
+    uint16_t secs;
+    uint16_t flags;
+    uint32_t ciaddr;
+    uint32_t yiaddr;
+    uint32_t siaddr;
+    uint32_t giaddr;
+    char chaddr[16];
+    char sname[64];
+    char file[128];
+    char magic[4];
+    char opt[3];
+};
+ 
+int main(int argc, char *argv[]){
+	struct dhcpmessage dhcpmsg;
+	struct sockaddr_in sa_server, si_other;
+	int s, i = 1, slen = sizeof(si_other), recv_len, xid = 0;
+	char cyiaddr[BUFLEN] = "";
+	
+	char fileGetIPAddr[50], string[50];
+	FILE *fileStream;
+     
+	if((s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) == -1)
+		die("socket");
+ 
+    	memset((char *) &sa_server, 0, sizeof(sa_server));
+     
+	sa_server.sin_family = AF_INET;
+	sa_server.sin_port = htons(atoi(argv[1]));
+	sa_server.sin_addr.s_addr = htonl(INADDR_ANY);
+
+	if(bind(s, (struct sockaddr *)&sa_server, sizeof(sa_server)) == -1)
+		die("bind");
+	
+	printf("\t\tDHCP server\n");
+
+	while(1){
+
+		//DHCP discover
+		printf("\nDHCP Discover\n");
+
+
+		if((recv_len = recvfrom(s, &dhcpmsg, sizeof(dhcpmsg), 0, (struct sockaddr *) &si_other, &slen)) == -1)
+			die("recvfrom()");
+
+		printf("Broadcast from client from %s, port number:%d\n", inet_ntoa(si_other.sin_addr), ntohs(si_other.sin_port));
+		printf("yiaddr: %s\n", cyiaddr);
+		printf("xid: %d\n", dhcpmsg.xid);
+
+		//DHCP offer
+		printf("\nDHCP Offer");
+		fileStream = fopen("IPs.txt", "r"); //IP addresses from file
+		for(int j = 0; j < i; ++j, fgets(fileGetIPAddr, 50, fileStream));
+		strcpy(cyiaddr, fileGetIPAddr);
+		
+		printf("\nyiaddr is: %s", cyiaddr); 
+		printf("xid: %d\n", dhcpmsg.xid);
+
+		inet_aton(cyiaddr, &dhcpmsg.yiaddr);
+
+		strcpy(dhcpmsg.sname, "my_dhcp");
+		dhcpmsg.opt[1] = 1; // mask 255.255.255.0
+		if(sendto(s, &dhcpmsg, sizeof(dhcpmsg), 0, (struct sockaddr *) &si_other, slen) == -1)
+			die("sendto()");
+
+
+		//DHCP request
+		printf("\nDHCP Request\n");
+		if((recv_len = recvfrom(s, &dhcpmsg, sizeof(dhcpmsg), 0, (struct sockaddr *) &si_other, &slen)) == -1)
+			die("recvfrom()");
+
+
+		printf("Request from client from %s, port number:%d\n", inet_ntoa(si_other.sin_addr), ntohs(si_other.sin_port));
+		printf("yiaddr: %s", cyiaddr);
+		printf("xid: %d\n", dhcpmsg.xid);
+
+		//DHCP ack
+		printf("\nDHCP Ack\n");
+		printf("Sending ACK message to client:%s, on port number:%d\n", inet_ntoa(si_other.sin_addr), ntohs(si_other.sin_port));
+		printf("yiaddr: %s", cyiaddr);
+		printf("xid: %d\n", dhcpmsg.xid);
+		dhcpmsg.opt[1] = 1; // mask 255.255.255.0
+       		if(sendto(s, &dhcpmsg, sizeof(dhcpmsg), 0, (struct sockaddr *) &si_other, slen) == -1)
+			die("sendto()");
+
+
+		i++;
+		if(i == 7){
+			printf("Run out of IPs..\n");
+			break;
+		}
+		printf("\n\n");
+	}
+
+	fclose(fileStream);
+	close(s);
+	return 0;
+}
+
+
+client.c
+
+#include<stdio.h>
+#include<ctype.h>
+#include<stdlib.h>
+#include<string.h>
+#include<unistd.h>
+#include<signal.h>
+#include<sys/wait.h>
+#include<sys/types.h>
+#include<sys/socket.h>
+#include<netinet/in.h>
+#include<arpa/inet.h>
+#include<errno.h>
+#include<sys/file.h>
+#include<sys/msg.h>
+#include<sys/ipc.h>
+#include<time.h>
+ 
+#define SERVER "10.0.2.15"
+#define BUFLEN 512
+ 
+void die(char *s){
+	perror(s);
+	exit(1);
+}
+ 
+
+struct dhcpmessage
+{
+    uint8_t op;
+    uint8_t htype;
+    uint8_t hlen;
+    uint8_t hops;
+    uint32_t xid;
+    uint16_t secs;
+    uint16_t flags;
+    uint32_t ciaddr;
+    uint32_t yiaddr;
+    uint32_t siaddr;
+    uint32_t giaddr;
+    char chaddr[16];
+    char sname[64];
+    char file[128];
+    char opt[3];
+};
+
+int main(int argc, char *argv[]){
+	struct sockaddr_in sa;
+	struct dhcpmessage dhcpmsg;
+	dhcpmsg.op = 1;
+	dhcpmsg.htype = 1;
+	dhcpmsg.hlen = 6;
+	dhcpmsg.hops = 0;
+	dhcpmsg.xid = htonl(1000);
+	dhcpmsg.secs = htons(0);
+	dhcpmsg.flags = htons(0x8000);
+	dhcpmsg.chaddr[0] = 0x00;
+	dhcpmsg.chaddr[1] = 0x1A;
+	dhcpmsg.chaddr[2] = 0x80;
+	dhcpmsg.chaddr[3] = 0x80;
+	dhcpmsg.chaddr[4] = 0x2C;
+	dhcpmsg.chaddr[5] = 0xC3;
+	dhcpmsg.opt[0]=53;
+	dhcpmsg.opt[1]=1;
+	dhcpmsg.opt[2]=1;
+	int s, slen = sizeof(sa), recv_len, xid;
+	char yiaddr[BUFLEN] = "0.0.0.0";
+	srand(time(0));
+
+	printf("\t\tDHCP client\n");
+	
+	if((s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) == -1){
+		die("socket");
+	}
+
+	memset((char *) &sa, 0, sizeof(sa));
+
+	sa.sin_family = AF_INET;
+	sa.sin_port = htons(atoi(argv[1]));
+     
+	if (inet_aton(SERVER , &sa.sin_addr) == 0) {
+		fprintf(stderr, "inet_aton() failed\n");
+		exit(1);
+	}
+  	
+	//DHCP discover
+	printf("\nDHCP Discover\n");
+	printf("yiaddr: %s\n", yiaddr);
+    
+	dhcpmsg.xid = rand() % 900 + 100; 
+	dhcpmsg.yiaddr = htonl( "0.0.0.0" );
+	printf("xid: %d\n", dhcpmsg.xid);
+
+
+	if(sendto(s, &dhcpmsg, sizeof(dhcpmsg), 0, (struct sockaddr *) &sa, slen) == -1)
+		die("sendto()");
+    
+	//DHCP offer
+	if((recv_len = recvfrom(s, &dhcpmsg, sizeof(dhcpmsg), 0, (struct sockaddr *) &sa, &slen)) == -1)
+        	die("recvfrom()");
+
+	printf("\nDHCP Offer\n");
+	struct in_addr ip_addr;
+    	ip_addr.s_addr = dhcpmsg.yiaddr;
+    	printf("yiaddr is: %s\n", inet_ntoa(ip_addr)); 
+	printf("xid: %d\n", dhcpmsg.xid);
+
+
+	
+	
+	
+	
+	//DHCP request
+	printf("\nDHCP Request\n");
+	ip_addr.s_addr = dhcpmsg.yiaddr;
+    	printf("yiaddr is: %s\n", inet_ntoa(ip_addr)); 
+	printf("xid: %d\n", ++dhcpmsg.xid);
+
+	//Send to DHCP server
+	if(sendto(s, &dhcpmsg, sizeof(dhcpmsg), 0, (struct sockaddr *) &sa, slen) == -1)
+    		die("sendto()");
+
+
+    
+    	//DHCP ack
+	if((recv_len = recvfrom(s, &dhcpmsg, sizeof(dhcpmsg), 0, (struct sockaddr *) &sa, &slen)) == -1)
+        	die("recvfrom()");
+	
+	printf("\nDHCP Ack\n");
+	ip_addr.s_addr = dhcpmsg.yiaddr;
+    	printf("yiaddr is: %s\n", inet_ntoa(ip_addr)); 
+	printf("xid: %d\n", dhcpmsg.xid);
+    
+	printf("dns: %s\n", dhcpmsg.sname);
+	printf("dhcp option 1: mask 255.255.255.0\n");
+	close(s);
+	return 0;
+}

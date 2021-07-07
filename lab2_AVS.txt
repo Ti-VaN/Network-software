@@ -1,0 +1,192 @@
+Server.c 
+
+#include <stdio.h>
+#include <errno.h>
+#include <string.h>
+#include <sys/socket.h>
+#include <sys/types.h>
+#include <netinet/in.h>
+#include <unistd.h> 
+
+char arr[6]; // 65536 - max
+
+unsigned short checksum(unsigned short *ptr, int nbytes) 
+{
+    register long sum;
+    unsigned short oddbyte;
+    register short answer;
+ 
+    sum=0;
+    while(nbytes>1) {
+        sum+=*ptr++;
+        nbytes-=2;
+    }
+    if(nbytes==1) {
+        oddbyte=0;
+        *((u_char*)&oddbyte)=*(u_char*)ptr;
+        sum+=oddbyte;
+    }
+ 
+    sum = (sum>>16)+(sum & 0xffff);
+    sum = sum + (sum>>16);
+    answer=(short)~sum;
+sprintf(arr, "%u", answer);
+    return(answer);
+}
+
+int main(int argc, char *argv){
+
+	char Hz[100];
+	char csum_client[6]; // 65536 - max
+	char hex[6];
+
+	int sock = socket(PF_INET, SOCK_DGRAM, IPPROTO_UDP);
+
+	struct sockaddr_in sa;
+	int bound, len;
+	ssize_t recsize;
+	socklen_t *address_len = NULL;
+
+	sa.sin_family = AF_INET;
+	sa.sin_addr.s_addr = htonl(INADDR_ANY);
+	sa.sin_port = htons( 512 );	
+
+	if(bind(sock, (struct sockaddr *)&sa, sizeof(sa)) < 0){
+		printf("BIND ERROR %s\n", strerror(errno));
+		return -1;
+	}
+	if(getsockname(sock, (struct sockaddr *)&sa, (socklen_t *)&len) < 0){
+		printf("GETSOCKNAME %s\n", strerror(errno));
+		return -1;
+	}
+
+	printf("port: %hd\n", htons(sa.sin_port));
+
+	bound = bind(sock, (struct sockaddr*)&sa, sizeof(struct sockaddr));
+
+	while(1){
+		printf("recv test....\n");
+		recsize = recvfrom(sock, (void*)Hz, 100, 0, (struct sockaddr*)&sa, address_len);
+		for(int i = 0; i < 5; i++){
+			csum_client[i] = Hz[i + strlen(Hz) - 5];
+		}
+		Hz[strlen(Hz) - 5] = '\0';
+
+		unsigned short csum_server = checksum(Hz, strlen(Hz));
+
+		if(atoi(arr) == atoi(csum_client)){
+			sprintf(&hex, "%x", atoi(csum_client));
+			printf("Datagram: %s\n", Hz);
+			printf("Checksum from client is 0x%s; Checksum from server: 0x%02x\n", hex, csum_server);
+		}else{
+			printf("Nothing 0x%02x\n", csum_server);
+		}
+		
+		
+		
+
+		sleep(1);
+		
+		
+	}
+}
+
+Client.c
+#include <stdio.h>
+#include <errno.h>
+#include <string.h>
+#include <sys/socket.h>
+#include <sys/types.h>
+#include <netinet/in.h>
+#include <unistd.h> 
+#include <time.h>
+
+
+char short_arr[6]; // 65536 - max
+ 
+unsigned short checksum(unsigned short *ptr, int nbytes) 
+{
+    register long sum;
+    unsigned short oddbyte;
+    register short answer;
+ 
+    sum=0;
+    while(nbytes>1) {
+        sum+=*ptr++;
+        nbytes-=2;
+    }
+    if(nbytes==1) {
+        oddbyte=0;
+        *((u_char*)&oddbyte)=*(u_char*)ptr;
+        sum+=oddbyte;
+    }
+ 
+    sum = (sum>>16)+(sum & 0xffff);
+    sum = sum + (sum>>16);
+    answer=(short)~sum;
+sprintf(short_arr, "%u", answer);
+    return(answer);
+}
+
+int main(int argc, char **argv){
+
+	if(argc != 3){
+		printf("Need address & port\n");
+		return -1;
+	}
+
+	srand(time(NULL));
+	int sock;
+	struct sockaddr_in sa;
+	int bytes_sent;
+	char *buffer = "Hello world!", datagram[4096];
+	int buffer_length;	     
+
+	while(1){
+
+		buffer = "Hello world!";
+
+		buffer_length = strlen( buffer ) + 1;
+
+		printf("Message is %s\nChecksum is 0x%02x\n", buffer, checksum(buffer, buffer_length));
+		
+		int r = rand() % 10; // 0 to 9
+		
+		if(r == 0){ // 10% loss
+			buffer = "Hello_world?";
+		}
+
+		sock = socket(PF_INET, SOCK_DGRAM, IPPROTO_UDP);
+
+	    	if(sock == -1){
+			printf("ERROR CREATION NETWORK");
+			return 0;
+		}
+	
+	
+		sa.sin_family = AF_INET;
+		sa.sin_addr.s_addr = inet_addr(argv[1]);
+		sa.sin_port = htons(atoi(argv[2]));
+
+		strcpy(datagram, buffer);
+		// printf("1 %s\n", datagram);
+		strcat(datagram, short_arr);
+		// printf("2 %s\n", datagram);
+		
+
+		bytes_sent = sendto(sock,
+			datagram,
+			strlen(datagram) + 1, 
+			0,
+			(struct sockaddr*)&sa,
+			sizeof(struct sockaddr_in));
+
+		if(bytes_sent < 0)
+			printf("ERROR SENDING POCKET: %s\n", strerror(errno));
+
+		sleep(1);
+		close(sock);
+
+	}
+	return 0;
+}
